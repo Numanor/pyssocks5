@@ -9,13 +9,13 @@ Toy [SOCKS5](https://tools.ietf.org/html/rfc1928) proxy local &amp; remote serve
   >
   > ​	|- keys
   >
-  > ​		|- remote
+  > ​		|-- remote
   >
-  > ​		|- remote.pub
+  > ​		|-- remote.pub
   >
-  > ​		|- local
+  > ​		|-- local
   >
-  > ​		|- local.pub
+  > ​		|-- local.pub
 
 - run local proxy server `python local.py` ( `--help` for custom config info)
 
