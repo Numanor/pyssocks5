@@ -15,7 +15,7 @@ from Crypto.Signature import PKCS1_v1_5 as RSASignature
 from Crypto.PublicKey import RSA
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import SHA
-from SSocket import SSocket
+from utils.SSocket import SSocket
 from utils.socks import *
 
 class SocksLocalServer(StreamServer):
@@ -26,13 +26,11 @@ class SocksLocalServer(StreamServer):
         # remote pub key: encrypt outflow data & verify signature
         with open(args.remote_pub) as f:
             remote_pubkey = RSA.importKey(f.read())
-            print remote_pubkey.size()
         self.remote_cipher = RSACipher.new(remote_pubkey)
         self.remote_verifier = RSASignature.new(remote_pubkey)
         # local private key: decrypt inflow data & sign
         with open(args.private) as f:
             privatekey = RSA.importKey(f.read())
-            print privatekey.size()
         self.local_cipher = RSACipher.new(privatekey)
         self.local_signer = RSASignature.new(privatekey)
 

@@ -15,7 +15,7 @@ from Crypto.Signature import PKCS1_v1_5 as RSASignature
 from Crypto.PublicKey import RSA
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import SHA
-from SSocket import SSocket
+from utils.SSocket import SSocket
 from utils.socks import *
 
 class SocksServer(StreamServer):
