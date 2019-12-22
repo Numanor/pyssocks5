@@ -28,18 +28,19 @@ class SocksLocalServer(StreamServer):
     
     def handle(self, sock, addr):
         print('connection from %s:%s' % addr)
-
         src = SSocket(socket=sock)
 
         """
             socks5 negotiation step1: choose an authentication method
+
+            p.s. step2(specify command and destination) finished on remote server
         """
         ver, n_method = src.unpack('BB', 2) 
-        # 1.1 socks version
+        # 1. socks version
         if ver != SOCKS_VERSION_V:    # SOCKS Protocol Version 5 (RFC 1928)
             src.pack('BB', SOCKS_VERSION_V, SOCKS_NO_ACCEPT_METHOD)
             return
-        # 1.2 authentication method
+        # 2. authentication method
         if n_method == 0:
             src.pack('BB', SOCKS_VERSION_V, SOCKS_NO_ACCEPT_METHOD)
             return
@@ -50,58 +51,30 @@ class SocksLocalServer(StreamServer):
             if SOCKS_AUTH_NONE not in set(methods): # No Authentication
                 src.pack('BB', SOCKS_VERSION_V, SOCKS_NO_ACCEPT_METHOD)
                 return
-        # 1.3 auth method negotiation succeed
+        # 3. auth method negotiation succeed
         src.pack('!BB', SOCKS_VERSION_V, SOCKS_AUTH_NONE)
 
 
         """
-            socks5 negotiation step2: specify command and destination
+            Connect with remote server
         """
-        ver, cmd, rsv, atype = src.unpack('BBBB', 4)
-
-        # 2.1 only support 'connect' command
-        if cmd != SOCKS_CMD_CONNECT:
-            src.pack('BBBBIH', SOCKS_VERSION_V, SOCKS_REP_CMD_UNK, 0x00, 0x01, 0, 0)
-            return
-
-        # 2.2 only support ipv4/domain name address type
-        if atype == SOCKS_ATYP_IPV4: #ipv4
-            host, port = src.unpack('!IH', 6)
-            hostip = socket.inet_ntoa(struct.pack('!I', host))
-        elif atype == SOCKS_ATYP_DOMAIN: #domain name
-            length = src.unpack('B', 1)[0]
-            hostname, port = src.unpack("!%dsH" % length, length + 2)
-            hostip = gethostbyname(hostname)
-            host = struct.unpack("!I", socket.inet_aton(hostip))[0]
-        else:
-            src.pack('!BBBBIH', SOCKS_VERSION_V, SOCKS_REP_CMD_NOT, 0x00, 0x01, 0, 0)
-            return
-        
-        # setup remote proxy
+        # 1. connecting to remote proxy
         try:
             dest = SSocket(addr = (self.remote_ip, self.remote_port))
         except IOError, ex:
             print "%s:%d" % addr, "failed to connect to %s:%d" % ("127.0.0.1", 9099)
-            src.pack('!BBBBIH', 0x05, 0x03, 0x00, 0x01, host, port)
+            src.pack('!BBBBIH', SOCKS_VERSION_V, SOCKS_REP_NET_ERO, 0x00, 0x01, 0, 0)
             return
-        # aes set up
+        # 2. AES set up
         aes_key = get_random_bytes(16)
         aes_iv = get_random_bytes(16)
         dest.aes_init(aes_key, AES.MODE_CBC, aes_iv)
         dest.sendall(aes_key)
         dest.sendall(aes_iv)
-        # send remote host addr
-        dest.aes_pack('!IH', host, port)
-        # set up remote connnection
-        ver, reply, _, atype, host, port = dest.aes_unpack('!BBBBIH', 10)
-        if reply is SOCKS_REP_CON_SUC:
-            src.pack('!BBBBIH', SOCKS_VERSION_V, SOCKS_REP_CON_SUC, 0x00, SOCKS_ATYP_IPV4, host, port)
-        else:
-            src.pack('!BBBBIH', SOCKS_VERSION_V, SOCKS_REP_NET_ERO, 0x00, SOCKS_ATYP_IPV4, host, port)
-            return
-
+        # 3. start Forwarding daemon
         gevent.spawn(src.aes_enc_forward, dest)
         gevent.spawn(dest.aes_dec_forward, src)
+
 
     def close(self):
         sys.exit(0)

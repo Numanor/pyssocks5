@@ -13,6 +13,7 @@ class SSocket(gevent.socket.socket):
             self.connect(addr)
         else:
             raise Exception("XSocket.init: bad arguments")
+        self.aes_recvbuf = ''
 
     def unpack(self, fmt, length):
         data = self.recv(length)
@@ -26,6 +27,7 @@ class SSocket(gevent.socket.socket):
     
     def aes_init(self, key, mode, iv):
         self.aes = AES.new(key, mode, iv)
+        self.aes_recvbuf = ''
     
     def aes_send(self, data):
         data_len = len(data)
@@ -56,9 +58,14 @@ class SSocket(gevent.socket.socket):
         return self.aes_send(data)
     
     def aes_unpack(self, fmt, length):
-        data = self.aes_recv()
-        if len(data) < length:
-            raise Exception("SSocket.aes_unpack: bad formatted stream")
+        data = self.aes_recvbuf
+        while len(data) < length:
+            recvdata = self.aes_recv()
+            if not recvdata:
+                raise Exception("SSocket.aes_unpack: bad formatted stream")
+            data += recvdata
+        self.aes_recvbuf = data[length:]
+        data = data[:length]
         return struct.unpack(fmt, data)
 
     def aes_enc_forward(self, dest):

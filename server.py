@@ -18,14 +18,37 @@ class SocksServer(StreamServer):
         print('connection from %s:%s' % addr)
         src = SSocket(socket=sock)
 
-        # aes set up
+        # AES set up
         aes_key = src.recv(16)
         aes_iv = src.recv(16)
         src.aes_init(aes_key, AES.MODE_CBC, aes_iv)
-        # recv remote host
-        host, port = src.aes_unpack('!IH', 6)
-        hostip = socket.inet_ntoa(struct.pack('!I', host))
-        print "recv host %s:%d" % (hostip, port)
+
+        """
+            socks5 negotiation step2: specify command and destination
+        """
+        ver, cmd, rsv, atype = src.aes_unpack('BBBB', 4)
+        
+        # 1. only support 'connect' command
+        if cmd != SOCKS_CMD_CONNECT:
+            src.aes_pack('BBBBIH', SOCKS_VERSION_V, SOCKS_REP_CMD_UNK, 0x00, 0x01, 0, 0)
+            return
+
+        # 2. only support ipv4/domain name address type
+        if atype == SOCKS_ATYP_IPV4: #ipv4
+            host, port = src.aes_unpack('!IH', 6)
+            hostip = socket.inet_ntoa(struct.pack('!I', host))
+        elif atype == SOCKS_ATYP_DOMAIN: #domain name
+            length = src.aes_unpack('B', 1)[0]
+            hostname, port = src.aes_unpack("!%dsH" % length, length + 2)
+            hostip = gethostbyname(hostname)
+            host = struct.unpack("!I", socket.inet_aton(hostip))[0]
+        else:
+            src.aes_pack('!BBBBIH', SOCKS_VERSION_V, SOCKS_REP_CMD_UNK, 0x00, 0x01, 0, 0)
+            return
+        
+        """
+            Connect to destination & start forwarding
+        """
         # set up remote connection
         try:
             dest = SSocket(addr = (hostip, port))
