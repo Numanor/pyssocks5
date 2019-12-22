@@ -9,19 +9,59 @@ from gevent import socket
 from gevent.server import StreamServer
 from gevent.socket import create_connection, gethostbyname
 
-from Crypto.Cipher import AES
+from Crypto import Random
+from Crypto.Cipher import AES, PKCS1_v1_5 as RSACipher
+from Crypto.Signature import PKCS1_v1_5 as RSASignature
+from Crypto.PublicKey import RSA
+from Crypto.Random import get_random_bytes
+from Crypto.Hash import SHA
 from SSocket import SSocket
 from utils.socks import *
 
 class SocksServer(StreamServer):
+    def __init__(self, listen, args):
+        super(SocksServer, self).__init__(listen)
+        # remote pub key: encrypt outflow data & verify signature
+        with open(args.remote_pub) as f:
+            remote_pubkey = RSA.importKey(f.read())
+        self.remote_cipher = RSACipher.new(remote_pubkey)
+        self.remote_verifier = RSASignature.new(remote_pubkey)
+        # local private key: decrypt inflow data & sign
+        with open(args.private) as f:
+            privatekey = RSA.importKey(f.read())
+        self.local_cipher = RSACipher.new(privatekey)
+        self.local_signer = RSASignature.new(privatekey)
+
     def handle(self, sock, addr):
         print('connection from %s:%s' % addr)
         src = SSocket(socket=sock)
 
-        # AES set up
-        aes_key = src.recv(16)
-        aes_iv = src.recv(16)
+        """
+            Establish Secure Connection with remote server
+        """
+        # 1. Exchange Session Key
+        # 1.1 decrypt the received session key
+        ciphertext = src.recv(256)
+        session_key = self.local_cipher.decrypt(ciphertext, sentinel=Random.new().read(16+16))
+        aes_key = session_key[:16]
+        aes_iv = session_key[16:]
+        # 1.2 set up AES encrypted transmission
         src.aes_init(aes_key, AES.MODE_CBC, aes_iv)
+
+        # 2. RSA Authentication - remote
+        # 2.1 decrypt the received signature
+        signature = src.aes_recv()
+        # 2.2 verify
+        h = SHA.new(session_key)
+        if not self.remote_verifier.verify(h, signature):
+            return
+        
+        # 3. RSA Authentication - local
+        # 3.1 sign session key with local private key
+        h = SHA.new(session_key)
+        signature = self.local_signer.sign(h)
+        # 3.2 send the signature, encrypted by session key
+        src.aes_send(signature)
 
         """
             socks5 negotiation step2: specify command and destination
@@ -65,15 +105,17 @@ class SocksServer(StreamServer):
         sys.exit(0)
 
     @staticmethod
-    def start_server(port):
-        server = SocksServer(('0.0.0.0', port))
+    def start_server(args):
+        server = SocksServer(('0.0.0.0', args.port), args)
         gevent.signal(signal.SIGTERM, server.close)
         gevent.signal(signal.SIGINT, server.close)
-        print("Server is listening on 0.0.0.0:%d" % port)
+        print("Server is listening on 0.0.0.0:%d" % args.port)
         server.serve_forever()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', default=9099, type=int)
+    parser.add_argument('--remote_pub', default="keys/local.pub")
+    parser.add_argument('--private', default="keys/remote")
     args = parser.parse_args()
-    SocksServer.start_server(args.port)
+    SocksServer.start_server(args)
